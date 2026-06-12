@@ -1,0 +1,32 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model ApiKey {
+  id              String   @id @default(cuid())
+  key             String   @unique
+  characterLimit  Int      @default(700)
+  usedCharacters  Int      @default(0)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  messages ChatMessage[]
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  apiKeyId  String
+  chatId    String
+  role      String
+  content   String
+  provider  String?
+  createdAt DateTime @default(now())
+  apiKey    ApiKey   @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+
+  @@index([apiKeyId, chatId])
+}
