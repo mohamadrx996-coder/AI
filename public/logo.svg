@@ -2,7 +2,7 @@
 <svg version="1.1" xmlns="http://w3.org" xmlns:xlink="http://w3.org" x="0px" y="0px"
 	 viewBox="0 0 30 30" style="enable-background:new 0 0 30 30;" xml:space="preserve">
 <defs>
-  <!-- تدرج لوني مدمج بين الأحمر والأزرق -->
+  <!-- تدرج لوني مدمج متوافق مع معايير العرض القياسية -->
   <linearGradient id="redBlueGradient" x1="0%" y1="0%" x2="100%" y2="100%">
     <stop offset="0%" stop-color="#FF3B30" />
     <stop offset="100%" stop-color="#007AFF" />
@@ -15,21 +15,11 @@
       stroke-width: 0.8; 
       stroke-miterlimit: 10; 
     }
-
-    .circle-breathe {
-      animation: breathe 3s ease-in-out infinite;
-      transform-origin: center;
-    }
-
-    @keyframes breathe {
-      0%, 100% { opacity: 0.85; transform: scale(1); }
-      50% { opacity: 1; transform: scale(1.05); }
-    }
   </style>
 </defs>
 
-<g class="circle-breathe">
-  <!-- دائرة حمراء وزرقاء صافية بدون أي أحرف -->
+<g>
+  <!-- دائرة حمراء وزرقاء صافية متوافقة مع جميع المتصفحات والمعاينات -->
   <circle class="circle-bg" cx="15" cy="15" r="13.5"/>
 </g>
 </svg>
