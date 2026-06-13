@@ -1,31 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 
 function getSystemPrompt(): string {
-  try { return readFileSync(join(process.cwd(), 'system-prompt.txt'), 'utf-8').trim(); }
+  try { 
+    const path = join(process.cwd(), 'system-prompt.txt');
+    if (!existsSync(path)) return '';
+    // تقليم حجم الملف البرمجي لمنع انفجار الـ Context Window وخطأ الـ 413
+    return readFileSync(path, 'utf-8').trim().slice(0, 2000); 
+  }
   catch { return ''; }
 }
 
 type Msg = { role: string; content: string };
 
 // ─── OpenAI-compatible helper ─────────────────────────────────────────
-async function fetchAI(url: string, model: string, messages: Msg[], apiKey?: string, ms = 30000): Promise<string> {
+async function fetchAI(url: string, model: string, messages: Msg[], apiKey?: string, ms = 20000): Promise<string> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    
+    // ضبط وتثبيت الـ max_tokens لمنع تعليق السيرفرات والـ Timeout على Vercel
     const res = await fetch(url, {
       method: 'POST', headers, signal: ctrl.signal,
-      body: JSON.stringify({ model, messages, temperature: 0.7, max_tokens: 4096 }),
+      body: JSON.stringify({ model, messages, temperature: 0.7, max_tokens: 2048 }),
     });
     const text = await res.text();
     if (text.trim().startsWith('<')) throw new Error(`HTML (${res.status})`);
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 100)}`);
+    
     const data = JSON.parse(text);
-    const c = data.choices?.[0]?.message?.content;
+    const c = data?.choices?.[0]?.message?.content;
     if (!c?.trim()) throw new Error('empty response');
     return c;
   } finally { clearTimeout(t); }
@@ -35,25 +43,25 @@ async function fetchAI(url: string, model: string, messages: Msg[], apiKey?: str
 
 // Groq — نظام التدوين والتبديل التلقائي بين 3 مفاتيح
 async function withGroq(msgs: Msg[]) {
-  // تجميع المفاتيح الثلاثة في مصفوفة
   const keys = [
     process.env.GROQ_API_KEY_1,
     process.env.GROQ_API_KEY_2,
     process.env.GROQ_API_KEY_3,
-  ].filter(Boolean); // إزالة أي مفتاح لم يتم تعبئته في ملف الـ .env
+  ].filter(Boolean);
 
   if (keys.length === 0) throw new Error('لا توجد مفاتيح لموقع Groq في ملف الإعدادات');
 
-  // خلط المفاتيح بشكل عشوائي عند كل طلب لتفتيت ضغط الـ 30 طلب/دقيقة
   const shuffledKeys = [...keys].sort(() => Math.random() - 0.5);
   let lastError: any = null;
 
-  // تجربة المفاتيح واحداً تلو الآخر في حال واجه الأول مشكلة الضغط أو النفاد
+  // التحويل للموديل الخفيف والموفر للاستهلاك لتجنب الحظر المتكرر بالدقيقة
+  const model = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
+
   for (const key of shuffledKeys) {
     try {
       return await fetchAI(
-        'https://api.groq.com/openai/v1/chat/completions',
-        process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+        'https://groq.com',
+        model,
         msgs,
         key
       );
@@ -63,7 +71,6 @@ async function withGroq(msgs: Msg[]) {
     }
   }
 
-  // إذا فشلت كافة المفاتيح المتاحة لـ Groq
   throw lastError || new Error('فشلت جميع مفاتيح Groq المتاحة');
 }
 
@@ -71,23 +78,23 @@ async function withGroq(msgs: Msg[]) {
 async function withTogether(msgs: Msg[]) {
   const key = process.env.TOGETHER_API_KEY;
   if (!key) throw new Error('no key');
-  return fetchAI('https://api.together.xyz/v1/chat/completions',
-    process.env.TOGETHER_MODEL || 'meta-llama/Llama-3.3-70B-Instruct-Turbo-Free', msgs, key);
+  return fetchAI('https://together.xyz',
+    process.env.TOGETHER_MODEL || 'meta-llama/Meta-Llama-3-8B-Instruct-Turbo', msgs, key);
 }
 
 // OpenRouter — مجاني بمفتاح
 async function withOpenRouter(msgs: Msg[]) {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error('no key');
-  return fetchAI('https://openrouter.ai/api/v1/chat/completions',
-    process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.3-70b-instruct:free', msgs, key);
+  return fetchAI('https://openrouter.ai',
+    process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.1-8b-instruct:free', msgs, key);
 }
 
 // Cerebras — مجاني بمفتاح
 async function withCerebras(msgs: Msg[]) {
   const key = process.env.CEREBRAS_API_KEY;
   if (!key) throw new Error('no key');
-  return fetchAI('https://api.cerebras.ai/v1/chat/completions',
+  return fetchAI('https://cerebras.ai',
     process.env.CEREBRAS_MODEL || 'llama3.1-8b', msgs, key);
 }
 
@@ -96,8 +103,8 @@ async function withPollinations(msgs: Msg[]) {
   const models = ['openai', 'mistral', 'llama', 'deepseek'];
   const attempts = models.map(model =>
     fetchAI(
-      `https://text.pollinations.ai/openai/chat/completions?seed=${Math.floor(Math.random()*999999)}`,
-      model, msgs, undefined, 45000
+      `https://pollinations.ai{Math.floor(Math.random()*999999)}`,
+      model, msgs, undefined, 25000
     ).then(c => ({ c, p: `Pollinations(${model})` }))
   );
   const r = await Promise.any(attempts);
@@ -115,7 +122,6 @@ async function generate(messages: Msg[]): Promise<{ content: string; provider: s
 
   const errors: string[] = [];
 
-  // جرّب المزودين اللي عندهم مفاتيح أولاً
   for (const p of providers) {
     if (!p.active) continue;
     try {
@@ -130,7 +136,6 @@ async function generate(messages: Msg[]): Promise<{ content: string; provider: s
     }
   }
 
-  // Pollinations كـ fallback
   try {
     console.log('[AI] Trying Pollinations...');
     const r = await withPollinations(messages);
@@ -142,7 +147,6 @@ async function generate(messages: Msg[]): Promise<{ content: string; provider: s
     console.log(`[AI] ✗ Pollinations: ${msg}`);
   }
 
-  // رسالة خطأ واضحة
   const hasNoKeys = providers.every(p => !p.active);
   if (hasNoKeys) {
     throw new Error('لا يوجد مفتاح API. أضف GROQ_API_KEY_1 في ملف .env');
