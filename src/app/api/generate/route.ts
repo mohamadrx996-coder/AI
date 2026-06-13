@@ -3,9 +3,6 @@ import { db } from '@/lib/db';
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join } from 'path';
 
-// دالة مساعدة لعمل تأخير زمني لمنع التعليق المستمر
-const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
-
 // ─── قراءة مجلد knowledge كذاكرة للـ AI ─────────────────────────────
 function buildKnowledgeContext(): string {
   const knowledgeDir = join(process.cwd(), 'knowledge');
@@ -13,7 +10,6 @@ function buildKnowledgeContext(): string {
 
   let context = '=== ذاكرة الـ AI — اقرأ هذا جيداً وطبّقه ===\n\n';
 
-  // قراءة ملفات .md (القواعد والأسلوب)
   const mdFiles = ['rules.md', 'style.md'];
   for (const file of mdFiles) {
     const path = join(knowledgeDir, file);
@@ -22,7 +18,6 @@ function buildKnowledgeContext(): string {
     }
   }
 
-  // قراءة أمثلة الكود
   const examplesDir = join(knowledgeDir, 'examples');
   if (existsSync(examplesDir)) {
     context += '=== أمثلة أكواد مرجعية ===\n\n';
@@ -41,11 +36,9 @@ function buildKnowledgeContext(): string {
 function loadGroqKeys(): string[] {
   const keys: string[] = [];
 
-  // من .env
   const envKey = process.env.GROQ_API_KEY;
   if (envKey?.startsWith('gsk_')) keys.push(envKey);
 
-  // من groq-keys.json
   try {
     const path = join(process.cwd(), 'groq-keys.json');
     if (existsSync(path)) {
@@ -61,7 +54,7 @@ function loadGroqKeys(): string[] {
 
 type Msg = { role: string; content: string };
 
-async function fetchAI(url: string, model: string, messages: Msg[], apiKey?: string, ms = 25000): Promise<string> {
+async function fetchAI(url: string, model: string, messages: Msg[], apiKey?: string, ms = 15000): Promise<string> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
@@ -81,25 +74,26 @@ async function fetchAI(url: string, model: string, messages: Msg[], apiKey?: str
   } finally { clearTimeout(t); }
 }
 
-// ─── Groq مع تناوب تلقائي على كل المفاتيح ───────────────────────────
+// ─── Groq متوافق مع خوادم Vercel وبدون تأخير يعلق السيرفر ───────────────────────────
 async function withGroqRotation(messages: Msg[]): Promise<{ content: string; provider: string }> {
   const keys = loadGroqKeys();
   if (keys.length === 0) throw new Error('لا توجد مفاتيح Groq');
   
-  // تم تغيير النموذج الافتراضي إلى الحجم الأخف والأسرع لتجنب حظر الـ Rate Limit والتعليق المتكرر
+  // استخدام أسرع نموذج متاح لتقليل وقت معالجة خادم Vercel ومنع الـ Timeouts
   const model = process.env.GROQ_MODEL || 'llama-3-8b-instruct';
   
-  for (const key of keys) {
+  // نكتفي بتجربة أول مفتاحين فقط متاحين لتجنب استهلاك الـ 60 ثانية المحددة من Vercel
+  const activeKeys = keys.slice(0, 2);
+  
+  for (const key of activeKeys) {
     try {
-      const content = await fetchAI('https://api.groq.com/openai/v1/chat/completions', model, messages, key);
+      const content = await fetchAI('https://groq.com', model, messages, key);
       return { content, provider: `Groq` };
     } catch (e) {
       console.log(`[Groq] مفتاح فشل: ${key.slice(-6)} — ${e instanceof Error ? e.message : e}`);
-      // انتظر ثانيتين قبل تجربة المفتاح التالي لحماية الحساب من التجميد والتعليق المتتابع
-      await delay(2000);
     }
   }
-  throw new Error('كل مفاتيح Groq فشلت بسبب تخطي حد الطلبات أو انتهاء الصلاحية');
+  throw new Error('فشل Groq');
 }
 
 // ─── Pollinations fallback ────────────────────────────────────────────
@@ -107,21 +101,21 @@ async function withPollinations(messages: Msg[]): Promise<{ content: string; pro
   const models = ['openai', 'mistral', 'llama', 'deepseek'];
   const attempts = models.map(model =>
     fetchAI(
-      `https://text.pollinations.ai/openai/chat/completions?seed=${Math.floor(Math.random() * 999999)}`,
-      model, messages, undefined, 40000
+      `https://pollinations.ai{Math.floor(Math.random() * 999999)}`,
+      model, messages, undefined, 20000
     ).then(c => ({ content: c, provider: `Pollinations(${model})` }))
   );
   return Promise.any(attempts);
 }
 
 async function generate(messages: Msg[]): Promise<{ content: string; provider: string }> {
-  try { return await withGroqRotation(messages); } catch (e) {
-    console.log('[AI] Groq failed, trying Pollinations...', e instanceof Error ? e.message : e);
+  try { 
+    return await withGroqRotation(messages); 
+  } catch (e) {
+    console.log('[AI] Groq failed, trying Pollinations directly to prevent Vercel Timeout...');
+    // الانتقال فوراً لنظام البديل المجاني المضمون دون تعليق السيرفر
+    return await withPollinations(messages);
   }
-  try { return await withPollinations(messages); } catch (e) {
-    console.log('[AI] Pollinations failed:', e instanceof Error ? e.message : e);
-  }
-  throw new Error('تعذر الوصول للذكاء الاصطناعي. تحقق من مفاتيح Groq في groq-keys.json');
 }
 
 export const maxDuration = 60;
@@ -145,7 +139,6 @@ export async function POST(request: NextRequest) {
     if (remaining === 0) return NextResponse.json({ error: 'خلصت حروفك!', remaining: 0 }, { status: 429 });
     if (message.length > remaining) return NextResponse.json({ error: `الرسالة طويلة. متبقي ${remaining} حرف.`, remaining }, { status: 429 });
 
-    // بناء الرسائل مع الذاكرة
     const knowledge = buildKnowledgeContext();
     const systemContent = knowledge || '';
 
