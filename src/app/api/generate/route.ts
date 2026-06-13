@@ -68,7 +68,9 @@ async function fetchAI(url: string, model: string, messages: Msg[], apiKey?: str
     if (text.trim().startsWith('<')) throw new Error(`HTML ${res.status}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = JSON.parse(text);
-    const c = data.choices?.[0]?.message?.content;
+    
+    // تم إصلاح الصياغة البرمجية هنا لقراءة محتوى الاختيارات بشكل صحيح ومضمون
+    const c = data?.choices?.[0]?.message?.content;
     if (!c?.trim()) throw new Error('empty');
     return c;
   } finally { clearTimeout(t); }
