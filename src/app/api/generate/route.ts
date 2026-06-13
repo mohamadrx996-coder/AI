@@ -79,10 +79,7 @@ async function withGroqRotation(messages: Msg[]): Promise<{ content: string; pro
   const keys = loadGroqKeys();
   if (keys.length === 0) throw new Error('لا توجد مفاتيح Groq');
   
-  // استخدام أسرع نموذج متاح لتقليل وقت معالجة خادم Vercel ومنع الـ Timeouts
   const model = process.env.GROQ_MODEL || 'llama-3-8b-instruct';
-  
-  // نكتفي بتجربة أول مفتاحين فقط متاحين لتجنب استهلاك الـ 60 ثانية المحددة من Vercel
   const activeKeys = keys.slice(0, 2);
   
   for (const key of activeKeys) {
@@ -113,7 +110,6 @@ async function generate(messages: Msg[]): Promise<{ content: string; provider: s
     return await withGroqRotation(messages); 
   } catch (e) {
     console.log('[AI] Groq failed, trying Pollinations directly to prevent Vercel Timeout...');
-    // الانتقال فوراً لنظام البديل المجاني المضمون دون تعليق السيرفر
     return await withPollinations(messages);
   }
 }
