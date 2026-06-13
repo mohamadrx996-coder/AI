@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
+	 viewBox="0 0 30 30" style="enable-background:new 0 0 30 30;" xml:space="preserve">
+<defs>
+  <style type="text/css">
+    .st194{fill:#1A1A1A;stroke:#FFFFFF;stroke-width:0.6317;stroke-miterlimit:10;}
+    /* تم إزالة أكواد الحركة لتثبيت الشعار */
+  </style>
+
+  <linearGradient id="redGradient" x1="0%" y1="100%" x2="100%" y2="0%">
+    <stop offset="0%" stop-color="#FF1A40" />
+    <stop offset="100%" stop-color="#FF6B4A" />
+  </linearGradient>
+
+  <linearGradient id="blueGradient" x1="0%" y1="100%" x2="100%" y2="0%">
+    <stop offset="0%" stop-color="#0044FF" />
+    <stop offset="100%" stop-color="#00C4FF" />
+  </linearGradient>
+
+  <linearGradient id="blendGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="20%" stop-color="#FF1A40" stop-opacity="0.8"/>
+    <stop offset="50%" stop-color="#9A00FF" stop-opacity="0.5"/>
+    <stop offset="80%" stop-color="#0044FF" stop-opacity="0.8"/>
+  </linearGradient>
+</defs>
+
+<g>
+  <path class="st194" d="M24.51,28.51H5.49c-2.21,0-4-1.79-4-4V5.49c0-2.21,1.79-4,4-4h19.03c2.21,0,4,1.79,4,4v19.03
+    C28.51,26.72,26.72,28.51,24.51,28.51z"/>
+    
+  <g>
+    <circle cx="15" cy="15" r="8.5" fill="url(#redGradient)" />
+    
+    <path d="M 15,6.5 
+             A 8.5,8.5 0 0,0 15,23.5 
+             C 11.5,23.5 11,18.5 15,15 
+             C 19,11.5 18.5,6.5 15,6.5 Z" 
+          fill="url(#blueGradient)" />
+          
+    <circle cx="15" cy="15" r="8.5" fill="url(#blendGradient)" style="mix-blend-mode: screen;" />
+  </g>
+</g>
+</svg>
