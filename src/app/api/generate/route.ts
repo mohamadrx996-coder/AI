@@ -3,6 +3,9 @@ import { db } from '@/lib/db';
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join } from 'path';
 
+// دالة مساعدة لعمل تأخير زمني لمنع التعليق المستمر
+const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
+
 // ─── قراءة مجلد knowledge كذاكرة للـ AI ─────────────────────────────
 function buildKnowledgeContext(): string {
   const knowledgeDir = join(process.cwd(), 'knowledge');
@@ -82,16 +85,21 @@ async function fetchAI(url: string, model: string, messages: Msg[], apiKey?: str
 async function withGroqRotation(messages: Msg[]): Promise<{ content: string; provider: string }> {
   const keys = loadGroqKeys();
   if (keys.length === 0) throw new Error('لا توجد مفاتيح Groq');
-  const model = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+  
+  // تم تغيير النموذج الافتراضي إلى الحجم الأخف والأسرع لتجنب حظر الـ Rate Limit والتعليق المتكرر
+  const model = process.env.GROQ_MODEL || 'llama-3-8b-instruct';
+  
   for (const key of keys) {
     try {
       const content = await fetchAI('https://api.groq.com/openai/v1/chat/completions', model, messages, key);
       return { content, provider: `Groq` };
     } catch (e) {
       console.log(`[Groq] مفتاح فشل: ${key.slice(-6)} — ${e instanceof Error ? e.message : e}`);
+      // انتظر ثانيتين قبل تجربة المفتاح التالي لحماية الحساب من التجميد والتعليق المتتابع
+      await delay(2000);
     }
   }
-  throw new Error('كل مفاتيح Groq فشلت');
+  throw new Error('كل مفاتيح Groq فشلت بسبب تخطي حد الطلبات أو انتهاء الصلاحية');
 }
 
 // ─── Pollinations fallback ────────────────────────────────────────────
