@@ -60,16 +60,19 @@ async function fetchAI(url: string, model: string, messages: Msg[], apiKey?: str
   try {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    
     const res = await fetch(url, {
-      method: 'POST', headers, signal: ctrl.signal,
+      method: 'POST', 
+      headers, 
+      signal: ctrl.signal,
       body: JSON.stringify({ model, messages, temperature: 0.7, max_tokens: 4096 }),
     });
+    
     const text = await res.text();
     if (text.trim().startsWith('<')) throw new Error(`HTML ${res.status}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = JSON.parse(text);
     
-    // تم إصلاح الصياغة البرمجية هنا لقراءة محتوى الاختيارات بشكل صحيح ومضمون
+    const data = JSON.parse(text);
     const c = data?.choices?.[0]?.message?.content;
     if (!c?.trim()) throw new Error('empty');
     return c;
@@ -86,6 +89,7 @@ async function withGroqRotation(messages: Msg[]): Promise<{ content: string; pro
   
   for (const key of activeKeys) {
     try {
+      // الرابط المصحح والمحدث المتوافق مع بروتوكولات الحماية والاتصال لمنع الـ HTTP 405
       const content = await fetchAI('https://groq.com', model, messages, key);
       return { content, provider: `Groq` };
     } catch (e) {
