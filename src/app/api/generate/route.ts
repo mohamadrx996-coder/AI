@@ -1,41 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { readFileSync, readdirSync, existsSync } from 'fs';
-import { join } from 'path';
 
-// ─── قراءة مجلد knowledge كذاكرة للـ AI ─────────────────────────────
-function buildKnowledge(): string {
-  const dir = join(process.cwd(), 'knowledge');
-  if (!existsSync(dir)) return '';
-
-  let ctx = '# ذاكرتك — طبّق هذا في كل ردودك:\n\n';
-
-  for (const file of ['rules.md', 'style.md']) {
-    const p = join(dir, file);
-    if (existsSync(p)) ctx += readFileSync(p, 'utf-8') + '\n\n';
-  }
-
-  const exDir = join(dir, 'examples');
-  if (existsSync(exDir)) {
-    const files = readdirSync(exDir).filter(f => f.endsWith('.py'));
-    if (files.length > 0) {
-      ctx += '# أمثلة كود مرجعية — اصنع أدوات مشابهة أو أقوى:\n\n';
-      for (const f of files) {
-        ctx += `## ${f}\n\`\`\`python\n${readFileSync(join(exDir, f), 'utf-8')}\n\`\`\`\n\n`;
-      }
-    }
-  }
-  return ctx;
-}
-
-// ─── تحميل مفاتيح Groq من .env (GROQ_API_KEY_1 حتى _10) ──────────────
+// ─── قراءة مفاتيح Groq من .env ───────────────────────────────────────
 function loadGroqKeys(): string[] {
   const keys: string[] = [];
   for (let i = 1; i <= 10; i++) {
-    const k = process.env[`GROQ_API_KEY_${i}`];
-    if (k?.trim().startsWith('gsk_')) keys.push(k.trim());
+    const k = process.env[`GROQ_API_KEY_${i}`]?.trim();
+    if (k?.startsWith('gsk_')) keys.push(k);
   }
-  // دعم GROQ_API_KEY بدون رقم أيضاً
   const single = process.env.GROQ_API_KEY?.trim();
   if (single?.startsWith('gsk_') && !keys.includes(single)) keys.push(single);
   return keys;
@@ -43,13 +15,17 @@ function loadGroqKeys(): string[] {
 
 type Msg = { role: string; content: string };
 
-async function callGroq(key: string, messages: Msg[], ms = 25000): Promise<string> {
+// ─── Groq ─────────────────────────────────────────────────────────────
+async function callGroq(key: string, messages: Msg[]): Promise<string> {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), ms);
+  const t = setTimeout(() => ctrl.abort(), 28000);
   try {
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${key}`,
+      },
       body: JSON.stringify({
         model: process.env.GROQ_MODEL || 'llama-3.1-8b-instant',
         messages,
@@ -59,75 +35,84 @@ async function callGroq(key: string, messages: Msg[], ms = 25000): Promise<strin
       signal: ctrl.signal,
     });
     if (res.status === 429) throw new Error('RATE_LIMIT');
-    if (!res.ok) throw new Error(`HTTP_${res.status}`);
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`HTTP_${res.status}: ${txt.slice(0, 100)}`);
+    }
     const data = await res.json();
     const c = data.choices?.[0]?.message?.content;
-    if (!c?.trim()) throw new Error('EMPTY');
+    if (!c?.trim()) throw new Error('EMPTY_RESPONSE');
     return c;
-  } finally { clearTimeout(t); }
+  } finally {
+    clearTimeout(t);
+  }
 }
 
+// ─── Pollinations fallback ────────────────────────────────────────────
 async function callPollinations(messages: Msg[]): Promise<string> {
   const models = ['openai', 'mistral', 'llama'];
-  const attempts = models.map(model =>
-    (async () => {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 40000);
-      try {
-        const res = await fetch(
-          `https://text.pollinations.ai/openai/chat/completions?seed=${Math.floor(Math.random() * 999999)}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model, messages, max_tokens: 4096 }),
-            signal: ctrl.signal,
-          }
-        );
-        const text = await res.text();
-        if (!res.ok || text.startsWith('<')) throw new Error('FAIL');
-        const c = JSON.parse(text).choices?.[0]?.message?.content;
-        if (!c?.trim()) throw new Error('EMPTY');
-        return c;
-      } finally { clearTimeout(t); }
-    })()
-  );
-  return Promise.any(attempts);
+  const errors: string[] = [];
+
+  for (const model of models) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 35000);
+    try {
+      const res = await fetch(
+        `https://text.pollinations.ai/openai/chat/completions?seed=${Math.floor(Math.random() * 99999)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model, messages, max_tokens: 4096 }),
+          signal: ctrl.signal,
+        }
+      );
+      const text = await res.text();
+      if (!res.ok || text.trim().startsWith('<')) throw new Error(`HTTP_${res.status}`);
+      const data = JSON.parse(text);
+      const c = data.choices?.[0]?.message?.content;
+      if (c?.trim()) return c;
+      throw new Error('EMPTY');
+    } catch (e) {
+      errors.push(`${model}: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      clearTimeout(t);
+    }
+  }
+  throw new Error(`Pollinations failed: ${errors.join(' | ')}`);
 }
 
-// ─── تناوب تلقائي — يجرب كل مفتاح، لو 429 ينتقل للتالي ───────────────
+// ─── الدالة الرئيسية ──────────────────────────────────────────────────
 async function generate(messages: Msg[]): Promise<{ content: string; provider: string }> {
   const keys = loadGroqKeys();
+  const errors: string[] = [];
 
   for (const key of keys) {
     try {
       const content = await callGroq(key, messages);
       return { content, provider: 'Groq' };
     } catch (e) {
-      const msg = e instanceof Error ? e.message : '';
-      if (msg === 'RATE_LIMIT') {
-        console.log(`[Groq] Rate limit — next key...`);
-        continue; // جرّب المفتاح التالي
-      }
-      console.log(`[Groq] Error: ${msg}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push(`Groq[...${key.slice(-4)}]: ${msg}`);
+      console.log(`[Groq] ${msg}`);
     }
   }
 
-  // Pollinations كـ fallback نهائي
   try {
     const content = await callPollinations(messages);
     return { content, provider: 'Pollinations' };
-  } catch {
-    throw new Error('تعذر الوصول للذكاء الاصطناعي. تأكد من مفاتيح Groq في الإعدادات.');
+  } catch (e) {
+    errors.push(e instanceof Error ? e.message : String(e));
   }
+
+  // إرجاع الأخطاء الحقيقية للمساعدة في التشخيص
+  throw new Error(`فشل الاتصال — ${errors.join(' | ')}`);
 }
 
 export const maxDuration = 60;
 
 export async function GET() {
-  try {
-    const keys = loadGroqKeys();
-    return NextResponse.json({ activeKeys: keys.length });
-  } catch { return NextResponse.json({ activeKeys: 0 }); }
+  const keys = loadGroqKeys();
+  return NextResponse.json({ activeKeys: keys.length });
 }
 
 export async function POST(request: NextRequest) {
@@ -147,18 +132,18 @@ export async function POST(request: NextRequest) {
 
     const remaining = Math.max(0, apiKey.characterLimit - apiKey.usedCharacters);
     if (remaining === 0) return NextResponse.json({ error: 'خلصت حروفك!', remaining: 0 }, { status: 429 });
-    if (message.length > remaining) return NextResponse.json({ error: `الرسالة طويلة. متبقي ${remaining} حرف.`, remaining }, { status: 429 });
+    if (message.length > remaining) return NextResponse.json({ error: `متبقي ${remaining} حرف فقط.`, remaining }, { status: 429 });
 
-    // بناء الرسائل — بدون قطع المحادثة
-    const knowledge = buildKnowledge();
+    // System prompt بسيط بدون قراءة ملفات
+    const systemPrompt = process.env.SYSTEM_PROMPT || '';
+
     const msgs: Msg[] = [
-      ...(knowledge ? [{ role: 'system', content: knowledge }] : []),
+      ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
       ...safeHistory,
       { role: 'user', content: message.trim() },
     ];
 
     const { content, provider } = await generate(msgs);
-
     const chatId = existingChatId || `c-${Date.now().toString(36)}`;
 
     await db.chatMessage.createMany({
@@ -183,6 +168,7 @@ export async function POST(request: NextRequest) {
 
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'خطأ داخلي';
+    console.error('[Generate Error]', msg);
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
