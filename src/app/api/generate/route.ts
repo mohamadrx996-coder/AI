@@ -15,37 +15,53 @@ function loadGroqKeys(): string[] {
 
 type Msg = { role: string; content: string };
 
-// ─── Groq ─────────────────────────────────────────────────────────────
-async function callGroq(key: string, messages: Msg[]): Promise<string> {
+// ─── Groq — يجرب عدة نماذج لو واحد محدود ────────────────────────────
+const GROQ_MODELS = [
+  'llama-3.1-8b-instant',
+  'llama3-8b-8192',
+  'gemma2-9b-it',
+  'llama-3.3-70b-versatile',
+  'mixtral-8x7b-32768',
+];
+
+async function callGroqModel(key: string, model: string, messages: Msg[]): Promise<string> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 28000);
   try {
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({
-        model: process.env.GROQ_MODEL || 'llama-3.1-8b-instant',
-        messages,
-        temperature: 0.7,
-        max_tokens: 4096,
-      }),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model, messages, temperature: 0.7, max_tokens: 4096 }),
       signal: ctrl.signal,
     });
     if (res.status === 429) throw new Error('RATE_LIMIT');
     if (!res.ok) {
       const txt = await res.text().catch(() => '');
-      throw new Error(`HTTP_${res.status}: ${txt.slice(0, 100)}`);
+      throw new Error(`HTTP_${res.status}: ${txt.slice(0, 80)}`);
     }
     const data = await res.json();
     const c = data.choices?.[0]?.message?.content;
     if (!c?.trim()) throw new Error('EMPTY_RESPONSE');
     return c;
-  } finally {
-    clearTimeout(t);
+  } finally { clearTimeout(t); }
+}
+
+async function callGroq(key: string, messages: Msg[]): Promise<string> {
+  const preferred = process.env.GROQ_MODEL;
+  const models = preferred
+    ? [preferred, ...GROQ_MODELS.filter(m => m !== preferred)]
+    : GROQ_MODELS;
+
+  for (const model of models) {
+    try {
+      return await callGroqModel(key, model, messages);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '';
+      if (msg === 'RATE_LIMIT') { continue; } // جرّب نموذج آخر
+      throw e;
+    }
   }
+  throw new Error('RATE_LIMIT'); // كل النماذج محدودة
 }
 
 // ─── Pollinations fallback ────────────────────────────────────────────
