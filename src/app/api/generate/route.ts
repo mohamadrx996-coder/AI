@@ -114,8 +114,15 @@ export async function POST(request: NextRequest) {
     if (!body) return NextResponse.json({ error: 'طلب غير صالح' }, { status: 400 });
 
     const { message, history, apiKey: key, chatId: existingChatId } = body;
-    // كل رسالة مستقلة — بدون تاريخ
-  const safeHistory: Msg[] = [];
+    // آخر تبادل كامل (رسالة المستخدم + رد AI) — ثابت مهما طال الشات
+  const safeHistory: Msg[] = (() => {
+    if (!Array.isArray(history) || history.length === 0) return [];
+    const last2 = history.slice(-2).map(m => ({
+      role: m.role as string,
+      content: String(m.content).slice(0, 200), // 200 حرف كحد أقصى لكل رسالة
+    }));
+    return last2;
+  })();
 
     if (!key?.trim()) return NextResponse.json({ error: 'مفتاح الدخول مطلوب' }, { status: 401 });
     if (!message?.trim()) return NextResponse.json({ error: 'الرسالة مطلوبة' }, { status: 400 });
